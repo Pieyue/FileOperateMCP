@@ -10,11 +10,13 @@ import sqlite3
 from pathlib import Path
 from datetime import datetime
 from fastmcp import FastMCP
-from utils import safe_path, move_copy_check, initial_db, logger, BASE_PATH, RECOVERY_PATH, generate_recovery_id, parse_line_range
+from utils import (safe_path, move_copy_check, initial_db, logger, generate_recovery_id, parse_line_range,
+                   BASE_PATH, RECOVERY_PATH, LOG_FILE)
 
 initial_db()
 
-
+if not LOG_FILE.exists():
+    LOG_FILE.write_text("func_name,args_str,kwargs_str,status,timestamp,error_msg", encoding="utf-8-sig")
 
 mcp = FastMCP()
 
@@ -300,15 +302,16 @@ def delete_file(user_path:str) -> str:
     try:
         # 使用 UUID4 生成唯一 ID，几乎零碰撞概率，无需检查重复
         _id = generate_recovery_id()
-        
+
         with sqlite3.connect('mcp.db') as conn:
             try:
                 conn.cursor().execute(sql, (_id, str(path), datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
                 conn.commit()
+                RECOVERY_PATH.mkdir(exist_ok=True, parents=True)
+                shutil.move(path, RECOVERY_PATH / _id)
             except Exception as e:
                 conn.rollback()
-                raise Exception(f"数据库错误：{str(e)}")
-        shutil.move(path, RECOVERY_PATH / _id)
+                raise Exception(f"错误：{str(e)}")
         return f"成功！文件已删除，如果需要，你可以凭ID:{_id} 通过recovery_file恢复它们"
     except Exception as e:
         raise Exception(f"服务器错误：{str(e)}，文件未删除")
@@ -440,6 +443,57 @@ def search_file(pattern:str, user_path:str='./', types:str='f') -> dict[str, str
             raise PermissionError("错误：你只能查找基础目录中的内容")
     except Exception as e:
         raise Exception(f"服务器错误：{str(e)}")
+
+@mcp.tool()
+@logger
+def clean_recovery(_id:str) -> str:
+    """
+    清空回收站或永久删除文件
+    :param _id: 操作类型，支持三种模式：
+                - 'ALL': 清空整个回收站（删除所有文件和数据库记录），慎用！
+                - 'DATABASE': 清理数据库中的无效记录（文件已不存在但记录仍存在）
+                - 具体ID: 永久删除指定 ID 的文件及其数据库记录
+    :return: 操作结果消息
+    """
+    # 如果是ALL，清空回收站文件并清理数据库
+    if _id == "ALL":
+        # 清理磁盘文件
+        if RECOVERY_PATH.exists():
+            shutil.rmtree(RECOVERY_PATH)
+        RECOVERY_PATH.mkdir(parents=True, exist_ok=True)
+        # 清理数据库
+        with sqlite3.connect("mcp.db") as conn:
+            conn.cursor().execute("DELETE FROM recovery;")
+            conn.commit()
+        return "回收站已清空"
+
+    elif _id == "DATABASE":
+        # 清理数据库中无效的记录
+        with sqlite3.connect("mcp.db") as conn:
+            cursor = conn.cursor()
+            rows = cursor.execute("SELECT id FROM recovery;").fetchall()
+            # 使用生成器表达式解包为集合
+            rows = {row[0] for row in rows}
+            rec_dir = set(os.listdir(str(RECOVERY_PATH)))
+            # 使用差集运算过滤数据库中有而实际回收站中没有的数据
+            remnants = rows - rec_dir
+            # 清除数据库中所有无效的数据
+            for remnant in remnants:
+                cursor.execute("DELETE FROM recovery WHERE id=?", (remnant,))
+            conn.commit()
+        return "数据库清理成功！"
+
+    else:
+        # 凭id删除回收站中对应文件
+        with sqlite3.connect("mcp.db") as conn:
+            cursor = conn.cursor()
+            ori_path = cursor.execute("SELECT ori_path FROM recovery WHERE id=?", (_id,)).fetchall()[0][0]
+            if os.path.exists(ori_path):
+                os.remove(ori_path)
+            cursor.execute("DELETE FROM recovery WHERE id=?", (_id,))
+            conn.commit()
+        return f"已永久删除文件{_id}"
+
 
 if __name__ == "__main__":
     mcp.run()

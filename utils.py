@@ -6,10 +6,10 @@ from pathlib import Path
 from datetime import datetime
 from functools import wraps
 
-BASE_PATH = Path(r'D:\LLM_Data\Data')
-RECOVERY_PATH = Path(r"D:\LLM_Data\Recovery")
-BASE_PATH.mkdir(exist_ok=True)
-RECOVERY_PATH.mkdir(exist_ok=True)
+BASE_PATH = Path('Data')
+RECOVERY_PATH = Path("Recovery")
+BASE_PATH.mkdir(exist_ok=True, parents=True)
+RECOVERY_PATH.mkdir(exist_ok=True, parents=True)
 
 # 日志文件使用绝对路径
 LOG_FILE = Path(__file__).parent / 'record.csv'
@@ -119,7 +119,7 @@ def generate_recovery_id() -> str:
     使用 UUID4 的前 20 位，几乎零碰撞概率，无需检查重复
     :return: 20位唯一标识符
     """
-    return str(uuid.uuid4())[:20]
+    return str(uuid.uuid4())
 
 def safe_path(path: str) -> Path|bool:
     # resolve() 绝对路径 + 规范化 + 解析符号链接 + 判断路径是否存在

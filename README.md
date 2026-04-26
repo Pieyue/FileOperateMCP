@@ -2,6 +2,8 @@
 
 一个基于 FastMCP 构建的文件管理服务器，提供安全的文件读写、搜索、移动、复制、删除和恢复功能。
 
+---
+
 ## 🚀 快速开始
 
 ### 1. 安装依赖
@@ -18,7 +20,23 @@ pip install -r requirements.txt
 BASE_PATH = Path(r'D:\LLM_Data\Data')      # 文件操作根目录
 RECOVERY_PATH = Path(r"D:\LLM_Data\Recovery")  # 回收站目录
 ```
+---
 
+## 📂 项目结构
+
+```
+FileOperateMCP/
+├── Data                 # LLM操作空间
+├── Recovery             # 回收站
+├── main.py              # 主程序，包含所有 Tool 实现
+├── utils.py             # 工具函数（路径安全、ID生成、日志装饰器等）
+├── mcp.db               # SQLite3 数据库（回收站元数据）
+├── record.csv           # 操作日志文件
+├── requirements.txt     # 依赖列表
+└── README.md            # 项目文档
+```
+
+---
 
 ## 📋 项目简介
 
@@ -54,9 +72,10 @@ RECOVERY_PATH = Path(r"D:\LLM_Data\Recovery")  # 回收站目录
 5. [copy_file](#5-copy_file) - 复制文件
 6. [delete_file](#6-delete_file) - 删除文件（回收站）
 7. [recovery_file](#7-recovery_file) - 恢复文件
-8. [create_dir](#8-create_dir) - 创建目录
-9. [list_dir](#9-list_dir) - 列出目录内容
-10. [search_file](#10-search_file) - 搜索文件/目录
+8. [clean_recovery](#8-clean_recovery) - 清空回收站/永久删除
+9. [create_dir](#9-create_dir) - 创建目录
+10. [list_dir](#10-list_dir) - 列出目录内容
+11. [search_file](#11-search_file) - 搜索文件/目录
 
 ---
 
@@ -262,7 +281,41 @@ result = recovery_file('abc123def456ghi789jk', override=True)
 
 ---
 
-### 8. create_dir
+### 8. clean_recovery
+
+清空回收站或永久删除文件（不可恢复）。
+
+**参数：**
+- `_id` (str): 操作类型，支持三种模式：
+  - `'ALL'`: 清空整个回收站（删除所有文件和数据库记录），慎用！
+  - `'DATABASE'`: 清理数据库中的无效记录（文件已不存在但记录仍存在）
+  - 具体ID: 永久删除指定 ID 的文件及其数据库记录
+
+**返回：** 操作结果消息
+
+**示例：**
+```python
+# 清空整个回收站（慎用！）
+result = clean_recovery('ALL')
+print(result)  # "回收站已完全清空"
+
+# 清理数据库中的孤儿记录
+result = clean_recovery('DATABASE')
+print(result)  # "数据库清理成功！"
+
+# 永久删除特定文件（不可恢复！）
+result = clean_recovery('abc123def456ghi789jk')
+print(result)  # "已永久删除文件 abc123def456ghi789jk"
+```
+
+**⚠️ 警告：**
+- `clean_recovery('ALL')` 会**永久删除**回收站中的所有文件，无法恢复
+- `clean_recovery('具体ID')` 会**永久删除**指定文件，无法恢复
+- 建议先使用 `recovery_file()` 恢复需要的文件，再清空回收站
+
+---
+
+### 9. create_dir
 
 创建文件夹（支持多级目录自动创建）。
 
@@ -282,7 +335,7 @@ create_dir('parent/child/grandchild')
 
 ---
 
-### 9. list_dir
+### 10. list_dir
 
 列出目录中的所有对象。
 
@@ -303,7 +356,7 @@ contents = list_dir('documents')
 
 ---
 
-### 10. search_file
+### 11. search_file
 
 使用正则表达式搜索文件或目录名称。
 
@@ -396,46 +449,6 @@ CREATE TABLE recovery (
 - `id`: 20 位唯一标识符（UUID4 前缀）
 - `ori_path`: 原始文件路径（绝对路径）
 - `datetime`: 删除时间
-
----
-
-## 🚀 快速开始
-
-### 安装依赖
-
-```bash
-pip install fastmcp==3.2.4
-```
-
-### 运行服务器
-
-```bash
-cd MCP_Server
-python main.py
-```
-
-### 配置路径
-
-修改 `utils.py` 中的路径配置：
-
-```python
-BASE_PATH = Path(r'D:\LLM_Data\Data')      # 文件操作沙箱
-RECOVERY_PATH = Path(r"D:\LLM_Data\Recovery")  # 回收站路径
-```
-
----
-
-## 📂 项目结构
-
-```
-MCP_Server/
-├── main.py              # 主程序，包含所有 Tool 实现
-├── utils.py             # 工具函数（路径安全、ID生成、日志装饰器等）
-├── mcp.db               # SQLite3 数据库（回收站元数据）
-├── record.csv           # 操作日志文件
-├── requirements.txt     # 依赖列表
-└── README.md            # 项目文档
-```
 
 ---
 
