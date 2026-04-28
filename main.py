@@ -7,6 +7,7 @@ import shutil
 import re
 import base64
 import sqlite3
+import aiofiles
 from pathlib import Path
 from datetime import datetime
 from fastmcp import FastMCP
@@ -18,11 +19,11 @@ initial_db()
 if not LOG_FILE.exists():
     LOG_FILE.write_text("func_name,args_str,kwargs_str,status,timestamp,error_msg", encoding="utf-8-sig")
 
-mcp = FastMCP()
+mcp = FastMCP("FileOperate")
 
 @mcp.tool()
 @logger
-def read_file_content(user_path: str, mode:str='text', encoding:str='utf-8', lines:str='', bytes_count:int|None=None) -> str:
+async def read_file_content(user_path: str, mode:str='text', encoding:str='utf-8', lines:str='', bytes_count:int|None=None) -> str:
     """
     根据路径读取文件
     :param user_path: 相对于基础目录的文件地址。注：不允许使用'..'等方式跳到基础目录外
@@ -50,8 +51,8 @@ def read_file_content(user_path: str, mode:str='text', encoding:str='utf-8', lin
             
             if mode == 'text':
                 # 首先读取所有行
-                with open(path, 'r', encoding=encoding) as f:
-                    all_lines = f.readlines()
+                async with aiofiles.open(path, 'r', encoding=encoding) as f:
+                    all_lines = await f.readlines()
                 
                 total_lines = len(all_lines)
                 
@@ -77,23 +78,25 @@ def read_file_content(user_path: str, mode:str='text', encoding:str='utf-8', lin
                 
                 if bytes_count is None:
                     # 默认：读取全部字节
-                    binary_data = path.read_bytes()
+                    async with aiofiles.open(path, 'rb') as f:
+                        binary_data = await f.read()
                 elif bytes_count > 0:
                     # 读取前N个字节
-                    with open(path, 'rb') as f:
-                        binary_data = f.read(bytes_count)
+                    async with aiofiles.open(path, 'rb') as f:
+                        binary_data = await f.read(bytes_count)
                 elif bytes_count < 0:
                     # 读取倒数N个字节
                     abs_count = abs(bytes_count)
                     if abs_count >= file_size:
                         # 如果请求的字节数大于等于文件大小，读取全部
-                        binary_data = path.read_bytes()
+                        async with aiofiles.open(path, 'rb') as f:
+                            binary_data = await f.read()
                     else:
                         # 从文件末尾向前读取N个字节
-                        with open(path, 'rb') as f:
+                        async with aiofiles.open(path, 'rb') as f:
                             # 2：步长，参照点 文件末尾
-                            f.seek(-abs_count, 2)  # 从文件末尾向前偏移
-                            binary_data = f.read()
+                            await f.seek(-abs_count, 2)  # 从文件末尾向前偏移
+                            binary_data = await f.read()
                 else:
                     raise ValueError(f"错误：bytes_count参数不能为0")
                 
@@ -110,7 +113,7 @@ def read_file_content(user_path: str, mode:str='text', encoding:str='utf-8', lin
 
 @mcp.tool()
 @logger
-def find_str(user_path:str, regx:str, ignore_ul:bool=False, recursive:bool=True) -> str:
+async def find_str(user_path:str, regx:str, ignore_ul:bool=False, recursive:bool=True) -> str:
     """
     在文件中搜索匹配的文本
     :param user_path: 从基础目录开始的路径（文件或目录）。注：不可使用'..'跳到基础目录外
@@ -136,14 +139,16 @@ def find_str(user_path:str, regx:str, ignore_ul:bool=False, recursive:bool=True)
         
         results = []
         
-        def search_in_file(file_path: Path):
+        async def search_in_file(file_path: Path):
             """在单个文件中搜索"""
             try:
                 # 尝试不同的编码读取文件
                 for encoding in ['utf-8', 'gbk', 'latin-1']:
                     try:
-                        with open(file_path, 'r', encoding=encoding, errors='ignore') as f:
-                            for line_num, line in enumerate(f, 1):
+                        async with aiofiles.open(file_path, 'r', encoding=encoding, errors='ignore') as f:
+                            line_num = 0
+                            async for line in f:
+                                line_num += 1
                                 if pattern.search(line):
                                     # 格式化输出：相对路径:行号:内容
                                     rel_path = str(file_path.relative_to(BASE_PATH))
@@ -159,19 +164,19 @@ def find_str(user_path:str, regx:str, ignore_ul:bool=False, recursive:bool=True)
         
         if path.is_file():
             # 搜索单个文件
-            search_in_file(path)
+            await search_in_file(path)
         elif path.is_dir():
             # 搜索目录
             if recursive:
                 # path.rglob按名称递归列出所有子目录内的文件
                 for file_path in path.rglob('*'):
                     if file_path.is_file():
-                        search_in_file(file_path)
+                        await search_in_file(file_path)
             else:
                 # 仅搜索当前目录
                 for file_path in path.glob('*'):
                     if file_path.is_file():
-                        search_in_file(file_path)
+                        await search_in_file(file_path)
         
         if results:
             return '\n'.join(results)
@@ -183,7 +188,7 @@ def find_str(user_path:str, regx:str, ignore_ul:bool=False, recursive:bool=True)
 
 @mcp.tool()
 @logger
-def write_file_content(user_path:str, content:str='', mode:str='text', encoding:str='utf-8') -> str:
+async def write_file_content(user_path:str, content:str='', mode:str='text', encoding:str='utf-8') -> str:
     """
     创建文件并向指定路径的文件写入内容
     :param user_path: 相对于基础目录的文件地址。注：不允许使用'..'等方式跳到基础目录外
@@ -200,20 +205,22 @@ def write_file_content(user_path:str, content:str='', mode:str='text', encoding:
             
             if mode == 'text':
                 # 文本覆盖写入
-                length = path.write_text(content, encoding=encoding)
+                async with aiofiles.open(path, 'w', encoding=encoding) as f:
+                    length = await f.write(content)
                 return '文件创建成功' if length == 0 else '写入成功'
             
             elif mode == 'append':
                 # 文本追加写入
-                with open(path, 'a', encoding=encoding) as f:
-                    f.write(content)
+                async with aiofiles.open(path, 'a', encoding=encoding) as f:
+                    await f.write(content)
                 return '追加成功'
             
             elif mode == 'binary':
                 # 二进制覆盖写入（content为Base64编码）
                 try:
                     binary_data = base64.b64decode(content)
-                    path.write_bytes(binary_data)
+                    async with aiofiles.open(path, 'wb') as f:
+                        await f.write(binary_data)
                     return '二进制写入成功'
                 except Exception as decode_error:
                     raise ValueError(f"错误：Base64解码失败 - {str(decode_error)}")
@@ -222,8 +229,8 @@ def write_file_content(user_path:str, content:str='', mode:str='text', encoding:
                 # 二进制追加写入（content为Base64编码）
                 try:
                     binary_data = base64.b64decode(content)
-                    with open(path, 'ab') as f:
-                        f.write(binary_data)
+                    async with aiofiles.open(path, 'ab') as f:
+                        await f.write(binary_data)
                     return '二进制追加成功'
                 except Exception as decode_error:
                     raise ValueError(f"错误：Base64解码失败 - {str(decode_error)}")
@@ -237,7 +244,7 @@ def write_file_content(user_path:str, content:str='', mode:str='text', encoding:
 
 @mcp.tool()
 @logger
-def move_file(src: str, dst: str, override:bool=False) -> str:
+async def move_file(src: str, dst: str, override:bool=False) -> str:
     """
     移动文件或目录，如果src与dst都在同一目录下，则执行重命名
     :param src: 从基础路径开始的待移动的文件(夹)的路径。注：不允许使用'..'等方式跳到基础目录外
@@ -257,7 +264,7 @@ def move_file(src: str, dst: str, override:bool=False) -> str:
 
 @mcp.tool()
 @logger
-def copy_file(src:str, dst: str, override:bool=False) -> str:
+async def copy_file(src:str, dst: str, override:bool=False) -> str:
     """
     复制文件或目录
     :param src: 从基础路径开始的待复制的文件(夹)的路径。注：不允许使用'..'等方式跳到基础目录外
@@ -284,7 +291,7 @@ def copy_file(src:str, dst: str, override:bool=False) -> str:
 
 @mcp.tool()
 @logger
-def delete_file(user_path:str) -> str:
+async def delete_file(user_path:str) -> str:
     """
     删除文件或目录
     :param user_path: 从基础目录开始的待删除的文件(夹)的路径。注：不允许使用'..'等方式跳到基础目录外
@@ -308,7 +315,10 @@ def delete_file(user_path:str) -> str:
                 conn.cursor().execute(sql, (_id, str(path), datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
                 conn.commit()
                 RECOVERY_PATH.mkdir(exist_ok=True, parents=True)
-                shutil.move(path, RECOVERY_PATH / _id)
+                # 注意：shutil.move 是阻塞操作，但在 MCP 框架中通常可以接受
+                # 如果需要完全异步，可以使用 asyncio.to_thread
+                import asyncio
+                await asyncio.to_thread(shutil.move, path, RECOVERY_PATH / _id)
             except Exception as e:
                 conn.rollback()
                 raise Exception(f"错误：{str(e)}")
@@ -318,7 +328,7 @@ def delete_file(user_path:str) -> str:
 
 @mcp.tool()
 @logger
-def recovery_file(_id:str, override: bool=False) -> str:
+async def recovery_file(_id:str, override: bool=False) -> str:
     """
     通过删除文件时给出的ID，恢复对应的文件
     :param _id: 删除文件时返回的ID
@@ -346,7 +356,9 @@ def recovery_file(_id:str, override: bool=False) -> str:
 
             # 为了确保成功恢复，先检查一下父文件夹是否存在
             os.makedirs(str(ori_path.parent), exist_ok=True)
-            shutil.move(RECOVERY_PATH / _id, ori_path)
+            # 使用 asyncio.to_thread 将阻塞操作放到线程池中
+            import asyncio
+            await asyncio.to_thread(shutil.move, RECOVERY_PATH / _id, ori_path)
 
             # 成功恢复后清理数据库
             cursor.execute("DELETE FROM recovery WHERE id=?", (_id,))
@@ -357,7 +369,7 @@ def recovery_file(_id:str, override: bool=False) -> str:
 
 @mcp.tool()
 @logger
-def create_dir(user_path:str) -> str:
+async def create_dir(user_path:str) -> str:
     """
     创建一个文件夹，如果是多级目录，会自动创建
     :param user_path: 从基础目录开始的路径。注：不可使用'..'跳到基础目录外
@@ -375,7 +387,7 @@ def create_dir(user_path:str) -> str:
 
 @mcp.tool()
 @logger
-def list_dir(user_path:str='./') -> dict[str, str]|str:
+async def list_dir(user_path:str='./') -> dict[str, str]|str:
     """
     列出目录中的所有对象
     :param user_path: 从基础目录开始的路径。注：不可使用'..'跳到基础目录外
@@ -400,7 +412,7 @@ def list_dir(user_path:str='./') -> dict[str, str]|str:
 
 @mcp.tool()
 @logger
-def search_file(pattern:str, user_path:str='./', types:str='f') -> dict[str, str]|str:
+async def search_file(pattern:str, user_path:str='./', types:str='f') -> dict[str, str]|str:
     """
     搜索文件或目录
     :param pattern: 正则表达式，用于匹配对象名称
@@ -446,7 +458,7 @@ def search_file(pattern:str, user_path:str='./', types:str='f') -> dict[str, str
 
 @mcp.tool()
 @logger
-def clean_recovery(_id:str) -> str:
+async def clean_recovery(_id:str) -> str:
     """
     清空回收站或永久删除文件
     :param _id: 操作类型，支持三种模式：
@@ -459,7 +471,8 @@ def clean_recovery(_id:str) -> str:
     if _id == "ALL":
         # 清理磁盘文件
         if RECOVERY_PATH.exists():
-            shutil.rmtree(RECOVERY_PATH)
+            import asyncio
+            await asyncio.to_thread(shutil.rmtree, RECOVERY_PATH)
         RECOVERY_PATH.mkdir(parents=True, exist_ok=True)
         # 清理数据库
         with sqlite3.connect("mcp.db") as conn:
@@ -489,7 +502,8 @@ def clean_recovery(_id:str) -> str:
             cursor = conn.cursor()
             ori_path = cursor.execute("SELECT ori_path FROM recovery WHERE id=?", (_id,)).fetchall()[0][0]
             if os.path.exists(ori_path):
-                os.remove(ori_path)
+                import asyncio
+                await asyncio.to_thread(os.remove, ori_path)
             cursor.execute("DELETE FROM recovery WHERE id=?", (_id,))
             conn.commit()
         return f"已永久删除文件{_id}"

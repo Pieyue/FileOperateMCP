@@ -2,6 +2,7 @@ import sqlite3
 import json
 import csv
 import uuid
+import aiofiles
 from pathlib import Path
 from datetime import datetime
 from functools import wraps
@@ -166,9 +167,10 @@ def logger(func):
     """
     日志装饰器：记录函数调用的参数、结果和异常
     使用 CSV 格式安全地记录日志，避免特殊字符导致的格式问题
+    支持异步函数
     """
     @wraps(func)
-    def wrapper(*args, **kwargs):
+    async def wrapper(*args, **kwargs):
         func_name = func.__name__
         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         
@@ -177,17 +179,15 @@ def logger(func):
         kwargs_str = json.dumps(kwargs, ensure_ascii=False, default=str)
         
         try:
-            result = func(*args, **kwargs)
+            result = await func(*args, **kwargs)
             # 成功时记录日志，使用utf-8-sig编码，以防乱码
-            with open(LOG_FILE, 'a', encoding='utf-8-sig', newline='') as log:
-                writer = csv.writer(log)
-                writer.writerow([func_name, args_str, kwargs_str, 'Success', timestamp, ''])
+            async with aiofiles.open(LOG_FILE, 'a', encoding='utf-8-sig', newline='') as log:
+                await log.write(','.join([func_name, args_str, kwargs_str, 'Success', timestamp, '']) + '\n')
             return result
         except Exception as e:
             # 失败时记录日志，包含错误信息
             error_msg = str(e).replace('\n', ' | ')  # 替换换行符，保持单行
-            with open(LOG_FILE, 'a', encoding='utf-8-sig', newline='') as log:
-                writer = csv.writer(log)
-                writer.writerow([func_name, args_str, kwargs_str, 'Fail', timestamp, error_msg])
+            async with aiofiles.open(LOG_FILE, 'a', encoding='utf-8-sig', newline='') as log:
+                await log.write(','.join([func_name, args_str, kwargs_str, 'Fail', timestamp, error_msg]) + '\n')
             raise
     return wrapper
